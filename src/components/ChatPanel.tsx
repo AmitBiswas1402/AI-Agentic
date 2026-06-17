@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, type KeyboardEvent } from "react";
 import { Message, StatusStep } from "../../types/workspace";
 import { BlueTitle } from "./reusables";
 import { PricingModal } from "./PricingModal";
@@ -56,12 +56,12 @@ const ChatPanel = ({
     await onGenerate(trimmed, pendingImageUrl ?? undefined);
   };
 
-//   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-//     if (e.key === "Enter" && !e.shiftKey) {
-//       e.preventDefault();
-//       handleSubmit();
-//     }
-//   };
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    if (!canSubmit) return;
+    void handleSubmit();
+  };
 
   const dummyMessages: Message[] = [
     {
@@ -260,6 +260,7 @@ const ChatPanel = ({
               el.style.height = "auto";
               el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             }}
+            onKeyDown={handleKeyDown}
             disabled={isGenerating || isImproving || noCredits}
             placeholder={
               noCredits
@@ -324,6 +325,11 @@ const ChatPanel = ({
             )}
           </div>
         </div>
+        <p className="mt-1.5 text-center text-[10px] text-white/15">
+          {isGenerating || isImproving
+            ? "Click ■ to stop generation"
+            : "⏎ to send · Shift+⏎ for new line"}
+        </p>
       </div>
     </div>
   );
