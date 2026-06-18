@@ -1,6 +1,20 @@
 import { SignUp } from "@clerk/nextjs";
-import React from "react";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 
-export default function Page() {
-  return <SignUp />;
+export default async function Page() {
+  const { userId } = await auth();
+
+  if (userId) {
+    redirect("/");
+  }
+
+  return (
+    <SignUp
+      routing="path"
+      path="/sign-up"
+      signInUrl="/sign-in"
+      fallbackRedirectUrl="/"
+    />
+  );
 }
