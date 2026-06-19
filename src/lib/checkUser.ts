@@ -11,39 +11,85 @@ const getCurrentPlan = async (): Promise<Plan> => {
   return "free";
 };
 
+const syncPlan = async (
+  userId: string,
+  currentPlan: Plan,
+  existingPlan: string,
+  credits: number,
+) => {
+  if (existingPlan === currentPlan) {
+    return db.user.findUniqueOrThrow({ where: { id: userId } });
+  }
+
+  return db.user.update({
+    where: { id: userId },
+    data: {
+      plan: currentPlan,
+      credits: credits + PLANS[currentPlan].credits,
+    },
+  });
+};
+
 export const checkUser = async () => {
   const user = await currentUser();
   if (!user) {
     return null;
   }
 
+  const email = user.emailAddresses[0]?.emailAddress;
+  if (!email) {
+    return null;
+  }
+
+  const profile = {
+    clerkId: user.id,
+    name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || email,
+    email,
+    imageUrl: user.imageUrl ?? "",
+  };
+
   try {
     const currentPlan = await getCurrentPlan();
 
-    const existing = await db.user.findUnique({
+    const existingByClerkId = await db.user.findUnique({
       where: { clerkId: user.id },
     });
 
-    if (existing) {
-      if (existing.plan !== currentPlan) {
-        return await db.user.update({
-          where: { clerkId: user.id },
-          data: {
-            plan: currentPlan,
-            credits: existing.credits + PLANS[currentPlan].credits,
-          },
-        });
-      }
+    if (existingByClerkId) {
+      const refreshed = await db.user.update({
+        where: { clerkId: user.id },
+        data: { name: profile.name, imageUrl: profile.imageUrl },
+      });
 
-      return existing;
+      return syncPlan(
+        refreshed.id,
+        currentPlan,
+        refreshed.plan,
+        refreshed.credits,
+      );
+    }
+
+    const existingByEmail = await db.user.findUnique({
+      where: { email },
+    });
+
+    if (existingByEmail) {
+      const linked = await db.user.update({
+        where: { email },
+        data: profile,
+      });
+
+      return syncPlan(
+        linked.id,
+        currentPlan,
+        linked.plan,
+        linked.credits,
+      );
     }
 
     return await db.user.create({
       data: {
-        clerkId: user.id,
-        name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
-        email: user.emailAddresses[0].emailAddress,
-        imageUrl: user.imageUrl ?? "",
+        ...profile,
         credits: PLANS.free.credits,
         plan: "free",
       },

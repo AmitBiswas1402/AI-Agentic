@@ -1,5 +1,4 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
 
 const isPublicRoute = createRouteMatcher([
   "/",
@@ -13,29 +12,19 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (isPublicRoute(req)) {
-    return NextResponse.next();
+  if (isPublicRoute(req) || !isProtectedRoute(req)) {
+    return;
   }
 
-  if (!isProtectedRoute(req)) {
-    return NextResponse.next();
-  }
-
-  const { userId } = await auth();
-
-  if (!userId) {
-    const signInUrl = new URL("/sign-in", req.url);
-    signInUrl.searchParams.set("redirect_url", req.url);
-    return NextResponse.redirect(signInUrl);
-  }
-
-  return NextResponse.next();
+  await auth.protect();
 });
 
 export const config = {
   matcher: [
+    // Skip Next.js internals and static files, unless found in search params
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/__clerk/:path*",
     "/(api|trpc)(.*)",
+    // Required so Clerk can complete the session handshake
+    "/__clerk/(.*)",
   ],
 };

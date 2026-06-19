@@ -164,6 +164,12 @@ const CodePanel = ({ fileData, isGenerating, onFilePatch }: CodePanelProps) => {
 
   const filePathKey = Object.keys(files).sort().join("|");
 
+  useEffect(() => {
+    if (fileData?.files) {
+      setActiveTab("preview");
+    }
+  }, [fileData?.files]);
+
   return (
     <div className="sandpack-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <SandpackProvider

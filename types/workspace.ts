@@ -30,4 +30,5 @@ export interface WorkspaceUser {
   id: string;
   credits: number;
   plan: string;
+  imageUrl: string;
 }

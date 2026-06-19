@@ -15,12 +15,12 @@ import {
   SectionHeading,
   SectionLabel,
 } from "@/components/reusables";
-import { SignInButton, useAuth, useClerk } from "@clerk/nextjs";
+import { Show, useAuth } from "@clerk/nextjs";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 const HomePage = () => {
-  const { isSignedIn } = useAuth();
-  const { openSignIn } = useClerk();
+  const { isSignedIn, isLoaded } = useAuth();
   const [prompt, setPrompt] = useState("");
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const router = useRouter();
@@ -33,13 +33,32 @@ const HomePage = () => {
   }, []);
 
   const handleGenerate = () => {
-    if (!isSignedIn) {
-      openSignIn();
+    if (!isLoaded) return;
+
+    if (isSignedIn !== true) {
+      const redirectUrl = prompt.trim()
+        ? `/workspace?prompt=${encodeURIComponent(prompt.trim())}`
+        : "/";
+      router.push(
+        `/sign-in?redirect_url=${encodeURIComponent(redirectUrl)}`,
+      );
       return;
     }
+
     if (!prompt.trim()) return;
     router.push(`/workspace?prompt=${encodeURIComponent(prompt.trim())}`);
   };
+
+  const handlePromptKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    handleGenerate();
+  };
+
+  const isGenerateDisabled =
+    !isLoaded || (isSignedIn === true && !prompt.trim());
 
   return (
     <main className="min-h-screen bg-[#0a0a0a] selection:bg-white/20">
@@ -80,6 +99,7 @@ const HomePage = () => {
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handlePromptKeyDown}
               placeholder={PLACEHOLDERS[placeholderIndex]}
               className="min-h-30 w-full resize-none border-0 bg-transparent text-white placeholder:text-white/30 focus-visible:ring-0 focus-visible:ring-offset-0 text-base"
             />
@@ -90,7 +110,7 @@ const HomePage = () => {
 
               <Button
                 onClick={handleGenerate}
-                disabled={isSignedIn === true && !prompt.trim()}
+                disabled={isGenerateDisabled}
                 size="sm"
                 className="rounded-full border-0 bg-purple-600 px-5 text-white shadow-none hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -389,15 +409,30 @@ const HomePage = () => {
           Upgrade when you&apos;re ready.
         </p>
 
-        <SignInButton mode="modal">
+        <Show when="signed-out">
           <Button
+            asChild
             size="lg"
             className="relative h-11 rounded-full bg-white px-8"
           >
-            Get started free
-            <ChevronRight className="h-4 w-4" />
+            <Link href="/sign-in">
+              Get started free
+              <ChevronRight className="h-4 w-4" />
+            </Link>
           </Button>
-        </SignInButton>
+        </Show>
+        <Show when="signed-in">
+          <Button
+            asChild
+            size="lg"
+            className="relative h-11 rounded-full bg-white px-8 text-black"
+          >
+            <Link href="/workspace">
+              Open workspace
+              <ChevronRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </Show>
       </section>
 
       {/* Footer */}

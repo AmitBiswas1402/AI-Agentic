@@ -5,6 +5,7 @@ import { DM_Sans, Lora } from "next/font/google";
 import { ThemeProvider } from "@/components/Themes";
 import { ClerkProvider } from "@clerk/nextjs";
 import Header from "@/components/Header";
+import { Toaster } from "sonner";
 
 const lora = Lora({
   subsets: ["latin"],
@@ -36,7 +37,13 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <ClerkProvider>
+        <ClerkProvider
+          dynamic
+          signInUrl="/sign-in"
+          signUpUrl="/sign-up"
+          signInFallbackRedirectUrl="/"
+          signUpFallbackRedirectUrl="/"
+        >
           <ThemeProvider
             attribute="class"
             defaultTheme="system"
@@ -44,7 +51,8 @@ export default function RootLayout({
             disableTransitionOnChange
           >
             <Header />
-            {children}
+            <main>{children}</main>
+            <Toaster richColors />
           </ThemeProvider>
         </ClerkProvider>
       </body>

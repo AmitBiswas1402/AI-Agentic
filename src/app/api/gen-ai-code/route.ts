@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "@/lib/prisma";
-import { CREDIT_COST_PER_GENERATION } from "@/lib/constants";
+import { CREDIT_COST_PER_GENERATION, GEMINI_MODELS } from "@/lib/constants";
 import { FileData, Message } from "../../../../types/workspace";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -11,22 +11,6 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 function sseEvent(type: string, payload: unknown): string {
   return `data: ${JSON.stringify({ type, ...(payload as object) })}\n\n`;
-}
-
-// ─── Extract short label from a Gemini thought chunk ─────────────────────────
-// Gemini thoughts often start with a bold heading like **Verify Config**
-// We extract that. If no bold heading, take the first sentence only.
-
-function extractThoughtLabel(text: string): string | null {
-  // Try to grab **bold heading** at the start
-  const boldMatch = text.match(/\*\*([^*]{4,60})\*\*/);
-  if (boldMatch) return boldMatch[1].trim();
-
-  // Fall back to first sentence (up to first . or \n), capped at 60 chars
-  const sentence = text.split(/[.\n]/)[0].trim();
-  if (sentence.length >= 8 && sentence.length <= 80) return sentence;
-
-  return null;
 }
 
 // ─── npm validation ───────────────────────────────────────────────────────────
@@ -55,6 +39,53 @@ async function validateDependencies(
 function trimHistory(messages: Message[]): Message[] {
   if (messages.length <= 10) return messages;
   return [messages[0], ...messages.slice(-8)];
+}
+
+function isRetryableGeminiError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /503|429|UNAVAILABLE|high demand|quota/i.test(message);
+}
+
+function getGeminiErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/429|quota/i.test(message)) {
+    return "AI quota exceeded. Check your Gemini API key billing.";
+  }
+  if (/503|UNAVAILABLE|high demand/i.test(message)) {
+    return "AI is busy right now. Please try again in a moment.";
+  }
+  return "Something went wrong. Please try again.";
+}
+
+async function generateContentStreamWithFallback({
+  contents,
+}: {
+  contents: ReturnType<typeof buildContents>;
+}) {
+  let lastError: unknown;
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await ai.models.generateContentStream({
+        model,
+        contents,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          temperature: 0.7,
+          responseMimeType: "application/json",
+        },
+      });
+    } catch (err) {
+      lastError = err;
+      const isLast = model === GEMINI_MODELS[GEMINI_MODELS.length - 1];
+      if (!isRetryableGeminiError(err) || isLast) {
+        throw err;
+      }
+      console.warn(`[gen-ai-code] ${model} unavailable, trying next model`);
+    }
+  }
+
+  throw lastError ?? new Error("No Gemini models available");
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -181,42 +212,18 @@ export async function POST(request: NextRequest) {
       try {
         const contents = buildContents(messages, fileData);
 
-        const geminiStream = await ai.models.generateContentStream({
-          model: "gemini-3.5-flash",
+        const geminiStream = await generateContentStreamWithFallback({
           contents,
-          config: {
-            systemInstruction: SYSTEM_PROMPT,
-            temperature: 0.7,
-            responseMimeType: "application/json",
-            thinkingConfig: {
-              includeThoughts: true,
-            },
-          },
         });
 
         let accumulated = ""; // final JSON output
-        let lastEmitTime = 0; // throttle thought emissions
 
         for await (const chunk of geminiStream) {
           const parts = chunk.candidates?.[0]?.content?.parts ?? [];
 
           for (const part of parts) {
-            if (!part.text) continue;
-
-            if (part.thought) {
-              // Extract just the short label — not the full wall of text
-              const now = Date.now();
-              if (now - lastEmitTime > 600) {
-                const label = extractThoughtLabel(part.text);
-                if (label) {
-                  enqueue(sseEvent("status", { message: label }));
-                  lastEmitTime = now;
-                }
-              }
-            } else {
-              // Actual JSON output
-              accumulated += part.text;
-            }
+            if (!part.text || part.thought) continue;
+            accumulated += part.text;
           }
         }
 
@@ -321,7 +328,7 @@ export async function POST(request: NextRequest) {
         console.error("[gen-ai-code] stream error:", err);
         enqueue(
           sseEvent("error", {
-            message: "Something went wrong. Please try again.",
+            message: getGeminiErrorMessage(err),
           })
         );
       } finally {

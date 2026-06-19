@@ -1,6 +1,7 @@
 "use client";
 
-import { SignInButton, Show, useAuth } from "@clerk/nextjs";
+import { Show, useAuth } from "@clerk/nextjs";
+import Link from "next/link";
 import { CheckoutButton } from "@clerk/nextjs/experimental";
 import { ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -47,8 +48,8 @@ export function PricingCard({
   compact = false,
   ctaLabel = "Get started",
 }: PricingCardProps) {
-  const { isSignedIn, has } = useAuth();
-  const signedIn = isSignedIn === true;
+  const { isSignedIn, isLoaded, has } = useAuth();
+  const signedIn = isLoaded && isSignedIn === true;
   const activePlanKey = getActivePlanKey(signedIn, has);
   const isActive = signedIn && activePlanKey === plan.key;
   const isDowngrade =
@@ -149,15 +150,16 @@ export function PricingCard({
               Default plan
             </Button>
           ) : (
-            <SignInButton mode="modal">
-              <Button
-                className="w-full rounded-full text-sm font-semibold border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90"
-                variant="ghost"
-              >
+            <Button
+              asChild
+              className="w-full rounded-full text-sm font-semibold border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90"
+              variant="ghost"
+            >
+              <Link href="/sign-in">
                 Get started free
                 <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            </SignInButton>
+              </Link>
+            </Button>
           )
         ) : signedIn && plan.planId ? (
           <Show when="signed-in">
@@ -181,21 +183,30 @@ export function PricingCard({
               </Button>
             </CheckoutButton>
           </Show>
+        ) : !isLoaded ? (
+          <Button
+            disabled
+            className="w-full rounded-full text-sm font-semibold opacity-50 border border-white/10 bg-transparent text-white/60"
+            variant="ghost"
+          >
+            {ctaLabel}
+          </Button>
         ) : (
-          <SignInButton mode="modal">
-            <Button
-              className={cn(
-                "w-full rounded-full text-sm font-semibold transition-all",
-                plan.featured
-                  ? "bg-blue-500 text-white hover:bg-blue-400 active:scale-95"
-                  : "border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90",
-              )}
-              variant="ghost"
-            >
+          <Button
+            asChild
+            className={cn(
+              "w-full rounded-full text-sm font-semibold transition-all",
+              plan.featured
+                ? "bg-blue-500 text-white hover:bg-blue-400 active:scale-95"
+                : "border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90",
+            )}
+            variant="ghost"
+          >
+            <Link href="/sign-in">
               {ctaLabel}
               <ArrowRight className="h-3.5 w-3.5" />
-            </Button>
-          </SignInButton>
+            </Link>
+          </Button>
         )}
       </div>
     </div>

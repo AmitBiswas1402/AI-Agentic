@@ -1,4 +1,4 @@
-import { Show, SignInButton, UserButton } from "@clerk/nextjs";
+import { Show, UserButton } from "@clerk/nextjs";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -36,16 +36,17 @@ const Header = async () => {
           </Show>
 
           <Show when="signed-out">
-            <SignInButton mode="modal">
-              <Button
-                size="sm"
-                className="rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-6 cursor-pointer bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 hover:scale-[1.03] transition-all duration-200"
-              >
+            <Button
+              asChild
+              size="sm"
+              className="rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-6 cursor-pointer bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 hover:scale-[1.03] transition-all duration-200"
+            >
+              <Link href="/sign-in">
                 <span className="inline-flex items-center gap-2">
                   Get Started <ArrowRight className="h-4 w-4" />
                 </span>
-              </Button>
-            </SignInButton>
+              </Link>
+            </Button>
           </Show>
         </div>
       </nav>

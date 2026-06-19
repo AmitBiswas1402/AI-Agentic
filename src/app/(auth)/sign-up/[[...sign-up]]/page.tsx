@@ -2,11 +2,17 @@ import { SignUp } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 
-export default async function Page() {
+interface SignUpPageProps {
+  searchParams: Promise<{ redirect_url?: string }>;
+}
+
+export default async function Page({ searchParams }: SignUpPageProps) {
   const { userId } = await auth();
+  const { redirect_url: redirectUrl } = await searchParams;
+  const afterSignUp = redirectUrl ?? "/workspace";
 
   if (userId) {
-    redirect("/");
+    redirect(afterSignUp);
   }
 
   return (
@@ -14,7 +20,8 @@ export default async function Page() {
       routing="path"
       path="/sign-up"
       signInUrl="/sign-in"
-      fallbackRedirectUrl="/"
+      fallbackRedirectUrl={afterSignUp}
+      forceRedirectUrl={redirectUrl}
     />
   );
 }

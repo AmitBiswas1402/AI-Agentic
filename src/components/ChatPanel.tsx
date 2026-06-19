@@ -40,12 +40,11 @@ const ChatPanel = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialPrompt ?? "");
   const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  const hasAutoSubmitted = useRef(false);
-  const noCredits = credits <= 0;
+  const noCredits = credits < 1;
   const canSubmit = input.trim() && !isGenerating && !isImproving && !noCredits;
 
   const handleSubmit = async () => {
@@ -74,7 +73,8 @@ const ChatPanel = ({
         "I've built a simple todo app with dark theme. Here's the code:\n\n- Add and delete todos\n- Mark todos as complete\n- Filter todos by status\n- Add a dark theme\n- Add a light theme",
     },
   ];
-  const renderedMessages = messages.length > 0 ? messages : dummyMessages;
+  const showPlaceholder = messages.length === 0 && !isGenerating && !initialPrompt;
+  const renderedMessages = messages.length > 0 ? messages : showPlaceholder ? dummyMessages : [];
 
   const statuses = [
     {
@@ -100,6 +100,21 @@ const ChatPanel = ({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, isGenerating]);
+
+  // Clear the input once the prompt has been submitted (auto or manual)
+  React.useEffect(() => {
+    const trimmed = initialPrompt?.trim();
+    if (!trimmed) return;
+
+    const submitted = messages.some(
+      (message) =>
+        message.role === "user" && message.content.trim() === trimmed,
+    );
+
+    if (submitted) {
+      setInput("");
+    }
+  }, [messages, initialPrompt]);
 
   return (
     <div className="flex flex-col h-full shrink-0 w-[320px] border-r border-white/6 bg-[#0d0d0d]">
