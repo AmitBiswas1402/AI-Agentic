@@ -4,8 +4,9 @@ import { BlueTitle } from "./reusables";
 import { PricingModal } from "./PricingModal";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
-import { ArrowUp, Loader2, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip, Sparkles, Square, X } from "lucide-react";
 import { Button } from "./ui/button";
+import ReactMarkdown from "react-markdown";
 
 interface ChatPanelProps {
   messages: Message[];
@@ -73,33 +74,16 @@ const ChatPanel = ({
         "I've built a simple todo app with dark theme. Here's the code:\n\n- Add and delete todos\n- Mark todos as complete\n- Filter todos by status\n- Add a dark theme\n- Add a light theme",
     },
   ];
-  const showPlaceholder = messages.length === 0 && !isGenerating && !initialPrompt;
-  const renderedMessages = messages.length > 0 ? messages : showPlaceholder ? dummyMessages : [];
-
-  const statuses = [
-    {
-      label: "Planning the component structure",
-      status: "done",
-    },
-    {
-      label: "Improving the component structure",
-      status: "running",
-    },
-    {
-      label: "Implementing the component structure",
-      status: "running",
-    },
-    {
-      label: "Testing the component structure",
-      status: "running",
-    },
-  ];
+  const showPlaceholder =
+    messages.length === 0 && !isGenerating && !initialPrompt;
+  const renderedMessages =
+    messages.length > 0 ? messages : showPlaceholder ? dummyMessages : [];
 
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, isGenerating]);
+  }, [messages, isGenerating, statusLog]);
 
   // Clear the input once the prompt has been submitted (auto or manual)
   React.useEffect(() => {
@@ -119,7 +103,7 @@ const ChatPanel = ({
   return (
     <div className="flex flex-col h-full shrink-0 w-[320px] border-r border-white/6 bg-[#0d0d0d]">
       <div className="border-b border-white/6 px-4 py-3 flex items-center justify-between">
-        <BlueTitle>{appTitle}</BlueTitle>
+        <BlueTitle>{appTitle ?? "New project"}</BlueTitle>
         <PricingModal reason={noCredits ? "credits" : "upgrade"}>
           <span
             className={cn(
@@ -141,14 +125,21 @@ const ChatPanel = ({
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-4 py-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] scrollbar-none"
       >
-        <div className="space-y-4">
+        <div className={cn("space-y-4", showPlaceholder && "opacity-40")}>
           {renderedMessages.map((msg, index) => (
             <div key={index}>
               {msg.role === "user" ? (
                 <div className="flex items-end justify-end gap-2">
                   <div className="relative max-w-[240px] rounded-2xl rounded-br-sm border border-white/20 bg-white/10 p-3 text-sm text-white/70">
                     <span className="absolute -right-1 bottom-3 h-2.5 w-2.5 rotate-45 border-r border-b border-white/20 bg-white/10" />
-                    <p className="whitespace-pre-wrap word-break-words">
+                    {msg.imageUrl && (
+                      <img
+                        src={msg.imageUrl}
+                        alt="Attached"
+                        className="mb-2 max-h-32 w-full rounded-lg border border-white/10 object-cover"
+                      />
+                    )}
+                    <p className="whitespace-pre-wrap wrap-break-word">
                       {msg.content}
                     </p>
                   </div>
@@ -175,9 +166,9 @@ const ChatPanel = ({
                   />
                   <div className="relative max-w-[240px] rounded-2xl rounded-bl-sm border border-white/20 bg-white/10 p-3 text-sm text-white/70">
                     <span className="absolute -left-1 bottom-3 h-2.5 w-2.5 rotate-45 border-b border-l border-white/20 bg-white/10" />
-                    <p className="whitespace-pre-wrap word-break-words">
-                      {msg.content}
-                    </p>
+                    <div className="prose prose-sm prose-invert max-w-none wrap-break-word text-[13px] leading-relaxed text-white/70 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:text-blue-300/80 [&_code]:break-all [&_li]:my-0.5 [&_p]:my-1 [&_pre]:overflow-x-auto! [&_pre]:whitespace-pre-wrap! [&_ul]:my-1">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               )}
@@ -236,6 +227,21 @@ const ChatPanel = ({
           </div>
         )}
       </div>
+
+      {/* No-credits upgrade banner */}
+      {noCredits && (
+        <div className="mx-3 mb-2 rounded-xl border border-red-500/15 bg-red-950/40 px-4 py-3">
+          <p className="mb-2 text-[12px] font-medium text-red-400/80">
+            You&apos;ve used all your credits
+          </p>
+          <PricingModal reason="credits">
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-full text-xs active:scale-95 cursor-pointer bg-white text-black px-3">
+              <Sparkles className="h-3 w-3" />
+              Upgrade plan
+            </span>
+          </PricingModal>
+        </div>
+      )}
 
       {/* Input */}
       <div className="shrink-0 border-t border-white/6 p-3">

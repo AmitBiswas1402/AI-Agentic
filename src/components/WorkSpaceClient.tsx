@@ -27,8 +27,12 @@ function parseMessages(raw: unknown): Message[] {
 function parseFileData(raw: unknown): FileData | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
-  if (!f.files || !f.dependencies) return null;
-  return raw as FileData;
+  if (!f.files || typeof f.files !== "object") return null;
+  return {
+    files: f.files as FileData["files"],
+    dependencies: (f.dependencies as Record<string, string>) ?? {},
+    title: typeof f.title === "string" ? f.title : undefined,
+  };
 }
 
 const WorkSpaceClient = ({
@@ -114,10 +118,14 @@ const WorkSpaceClient = ({
       setIsGenerating(true);
       setStatusLog([{ label: "Thinking...", status: "running" }]);
 
+      const abortController = new AbortController();
+      generateAbortRef.current = abortController;
+
       try {
         const res = await fetch("/api/gen-ai-code", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
           body: JSON.stringify({
             workspaceId: currentWorkspaceId,
             userId,
@@ -153,29 +161,46 @@ const WorkSpaceClient = ({
 
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
+
+            let event: {
+              type: string;
+              message?: string;
+              workspaceId?: string;
+              assistantMessage?: string;
+              fileData?: FileData;
+              creditsRemaining?: number;
+            };
+
             try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === "status") {
-                pushStep(event.message);
-              } else if (event.type === "done") {
-                completeSteps();
-                setWorkspaceId(event.workspaceId);
-                setFileData(event.fileData);
+              event = JSON.parse(line.slice(6));
+            } catch {
+              continue;
+            }
+
+            if (event.type === "status" && event.message) {
+              pushStep(event.message);
+            } else if (event.type === "done") {
+              completeSteps();
+              if (event.workspaceId) setWorkspaceId(event.workspaceId);
+              if (event.fileData) setFileData(event.fileData);
+              if (typeof event.creditsRemaining === "number") {
                 setCredits(event.creditsRemaining);
+              }
+              if (event.assistantMessage) {
                 setMessages((prev) => [
                   ...prev,
-                  { role: "assistant", content: event.assistantMessage },
+                  { role: "assistant", content: event.assistantMessage! },
                 ]);
+              }
+              if (event.workspaceId) {
                 window.history.replaceState(
                   null,
                   "",
                   `/workspace?id=${event.workspaceId}`,
                 );
-              } else if (event.type === "error") {
-                throw new Error(event.message);
               }
-            } catch {
-              // skip malformed SSE lines
+            } else if (event.type === "error") {
+              throw new Error(event.message ?? "Generation failed");
             }
           }
         }
@@ -195,6 +220,11 @@ const WorkSpaceClient = ({
     },
     [credits, isGenerating, userId],
   );
+
+  const handleStop = useCallback(() => {
+    generateAbortRef.current?.abort();
+    improveAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     const trimmed = initialPrompt?.trim();
@@ -246,7 +276,7 @@ const WorkSpaceClient = ({
           workspaceId={workspaceId}
           appTitle={fileData?.title ?? workspace?.title ?? null}
           userImageUrl={userImageUrl}
-          onStop={() => {}}
+          onStop={handleStop}
         />
       </div>
 

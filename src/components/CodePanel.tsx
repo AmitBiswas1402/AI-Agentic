@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { FileData, StatusStep } from "../../types/workspace";
 import {
   SandpackProvider,
@@ -8,7 +8,6 @@ import {
   SandpackCodeEditor,
   SandpackPreview,
   SandpackFileExplorer,
-  useSandpack,
 } from "@codesandbox/sandpack-react";
 import {
   Eye,
@@ -67,6 +66,24 @@ const BASE_DEPENDENCIES: Record<string, string> = {
 
 type ActiveTab = "preview" | "code";
 
+function normalizeSandpackFiles(
+  files: Record<string, { code: string }>,
+): Record<string, { code: string }> {
+  const normalized: Record<string, { code: string }> = {};
+  for (const [path, file] of Object.entries(files)) {
+    const key = path.startsWith("/") ? path : `/${path}`;
+    normalized[key] = file;
+  }
+  return normalized;
+}
+
+function buildSandpackDependencies(fileData: FileData | null) {
+  return {
+    ...BASE_DEPENDENCIES,
+    ...(fileData?.dependencies ?? {}),
+  };
+}
+
 interface CodePanelProps {
   fileData: FileData | null;
   isGenerating: boolean;
@@ -80,31 +97,12 @@ interface CodePanelProps {
 }
 
 function SandPackInner({
-  fileData,
-  isGenerating,
   activeTab,
   setActiveTab,
 }: {
-  fileData: FileData | null;
-  isGenerating: boolean;
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
 }) {
-  const { sandpack, listen } = useSandpack();
-
-  const prevFilesRef = useRef<Record<string, { code: string }>>({});
-
-  useEffect(() => {
-    if (!fileData?.files) return;
-
-    const prev = prevFilesRef.current;
-
-    for (const [path, { code }] of Object.entries(fileData.files)) {
-      sandpack.updateFile(path, code);
-    }
-    prevFilesRef.current = fileData.files;
-  }, [fileData?.files]);
-
   return (
     <Tabs
       value={activeTab}
@@ -160,24 +158,38 @@ function SandPackInner({
 
 const CodePanel = ({ fileData, isGenerating, onFilePatch }: CodePanelProps) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("preview");
-  const files = fileData?.files || PLACEHOLDER_FILES;
+  const files = fileData?.files
+    ? normalizeSandpackFiles(fileData.files)
+    : PLACEHOLDER_FILES;
+  const dependencies = buildSandpackDependencies(fileData);
 
-  const filePathKey = Object.keys(files).sort().join("|");
+  const sandpackKey = [
+    Object.keys(files).sort().join("|"),
+    Object.keys(dependencies).sort().join("|"),
+  ].join("::");
 
   useEffect(() => {
     if (fileData?.files) {
       setActiveTab("preview");
     }
-  }, [fileData?.files]);
+  }, [sandpackKey]);
 
   return (
-    <div className="sandpack-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="sandpack-panel relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {isGenerating && !fileData?.files && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0a]/80">
+          <div className="flex flex-col items-center gap-3 text-white/60">
+            <Loader2 className="size-8 animate-spin" />
+            <p className="text-sm">Generating your app…</p>
+          </div>
+        </div>
+      )}
       <SandpackProvider
-        key={filePathKey}
+        key={sandpackKey}
         template="react"
         theme="dark"
         files={files}
-        customSetup={{ dependencies: BASE_DEPENDENCIES }}
+        customSetup={{ dependencies }}
         options={{
           externalResources: ["https://cdn.tailwindcss.com"],
           recompileMode: "delayed",
@@ -186,8 +198,6 @@ const CodePanel = ({ fileData, isGenerating, onFilePatch }: CodePanelProps) => {
         className="flex h-full min-h-0 w-full flex-1 flex-col"
       >
         <SandPackInner
-          fileData={fileData}
-          isGenerating={isGenerating}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
         />

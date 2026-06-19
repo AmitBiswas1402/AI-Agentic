@@ -16,7 +16,7 @@ function sseEvent(type: string, payload: unknown): string {
 // ─── npm validation ───────────────────────────────────────────────────────────
 
 async function validateDependencies(
-  deps: Record<string, string>
+  deps: Record<string, string>,
 ): Promise<Record<string, string>> {
   const valid: Record<string, string> = {};
   await Promise.all(
@@ -29,7 +29,7 @@ async function validateDependencies(
       } catch {
         // silently skip hallucinated packages
       }
-    })
+    }),
   );
   return valid;
 }
@@ -40,6 +40,127 @@ function trimHistory(messages: Message[]): Message[] {
   if (messages.length <= 10) return messages;
   return [messages[0], ...messages.slice(-8)];
 }
+
+function extractJsonString(text: string): string {
+  let s = text.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+
+  const start = s.indexOf("{");
+  if (start === -1) throw new SyntaxError("No JSON object found");
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+
+  return s.slice(start);
+}
+
+function repairTruncatedJson(jsonStr: string): string {
+  let s = jsonStr.trim();
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+
+  for (const ch of s) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (ch === "{") depth++;
+      if (ch === "}") depth--;
+    }
+  }
+
+  if (inString) s += '"';
+  while (depth > 0) {
+    s += "}";
+    depth--;
+  }
+  return s;
+}
+
+function parseGeminiJson(text: string): unknown {
+  const jsonStr = extractJsonString(text);
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    return JSON.parse(repairTruncatedJson(jsonStr));
+  }
+}
+
+function normalizeGeneratedFiles(
+  files: Record<string, unknown>,
+): Record<string, { code: string }> {
+  const normalized: Record<string, { code: string }> = {};
+
+  for (const [path, file] of Object.entries(files)) {
+    const key = path.startsWith("/") ? path : `/${path}`;
+    let code: string | null = null;
+
+    if (typeof file === "string") {
+      code = file;
+    } else if (file && typeof file === "object" && "code" in file) {
+      code = String((file as { code: unknown }).code);
+    }
+
+    if (code) normalized[key] = { code };
+  }
+
+  return normalized;
+}
+
+const GEMINI_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    assistantMessage: { type: "string" },
+    title: { type: "string" },
+    files: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        properties: { code: { type: "string" } },
+        required: ["code"],
+      },
+    },
+    dependencies: {
+      type: "object",
+      additionalProperties: { type: "string" },
+    },
+  },
+  required: ["assistantMessage", "files", "dependencies"],
+} as const;
 
 function isRetryableGeminiError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -57,31 +178,45 @@ function getGeminiErrorMessage(err: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-async function generateContentStreamWithFallback({
+async function generateContentWithFallback({
   contents,
+  systemInstruction,
 }: {
   contents: ReturnType<typeof buildContents>;
-}) {
+  systemInstruction: string;
+}): Promise<string> {
   let lastError: unknown;
 
   for (const model of GEMINI_MODELS) {
-    try {
-      return await ai.models.generateContentStream({
-        model,
-        contents,
-        config: {
-          systemInstruction: SYSTEM_PROMPT,
-          temperature: 0.7,
-          responseMimeType: "application/json",
-        },
-      });
-    } catch (err) {
-      lastError = err;
-      const isLast = model === GEMINI_MODELS[GEMINI_MODELS.length - 1];
-      if (!isRetryableGeminiError(err) || isLast) {
-        throw err;
+    for (const useSchema of [true, false] as const) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            maxOutputTokens: 16384,
+            responseMimeType: "application/json",
+            ...(useSchema
+              ? { responseJsonSchema: GEMINI_RESPONSE_SCHEMA }
+              : {}),
+          },
+        });
+
+        const text = response.text?.trim() ?? "";
+        if (!text) throw new Error("Empty response from model");
+        return text;
+      } catch (err) {
+        lastError = err;
+        if (useSchema) continue;
+        const isLast = model === GEMINI_MODELS[GEMINI_MODELS.length - 1];
+        if (!isRetryableGeminiError(err) || isLast) {
+          throw err;
+        }
+        console.warn(`[gen-ai-code] ${model} unavailable, trying next model`);
+        break;
       }
-      console.warn(`[gen-ai-code] ${model} unavailable, trying next model`);
     }
   }
 
@@ -210,39 +345,39 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(chunk));
 
       try {
+        enqueue(sseEvent("status", { message: "Generating code…" }));
+
         const contents = buildContents(messages, fileData);
 
-        const geminiStream = await generateContentStreamWithFallback({
+        const accumulated = await generateContentWithFallback({
           contents,
+          systemInstruction: SYSTEM_PROMPT,
         });
-
-        let accumulated = ""; // final JSON output
-
-        for await (const chunk of geminiStream) {
-          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
-
-          for (const part of parts) {
-            if (!part.text || part.thought) continue;
-            accumulated += part.text;
-          }
-        }
 
         // ── Parse the complete JSON response ──────────────────────────────────
 
         let parsed: {
-          assistantMessage: string;
+          assistantMessage?: string;
           title?: string;
-          files: Record<string, { code: string }>;
-          dependencies: Record<string, string>;
+          files: Record<string, unknown>;
+          dependencies?: Record<string, string>;
         };
 
         try {
-          parsed = JSON.parse(accumulated);
-        } catch {
+          parsed = parseGeminiJson(accumulated) as typeof parsed;
+        } catch (parseErr) {
+          console.error(
+            "[gen-ai-code] JSON parse failed:",
+            parseErr,
+            "response length:",
+            accumulated.length,
+            "preview:",
+            accumulated.slice(0, 300),
+          );
           enqueue(
             sseEvent("error", {
               message: "AI returned invalid JSON. Please try again.",
-            })
+            }),
           );
           controller.close();
           return;
@@ -251,15 +386,18 @@ export async function POST(request: NextRequest) {
         const {
           assistantMessage,
           title: aiTitle,
-          files,
+          files: rawFiles,
           dependencies,
         } = parsed;
 
-        if (!files || typeof files !== "object") {
+        const files = normalizeGeneratedFiles(rawFiles ?? {});
+
+        if (!files["/App.js"]) {
           enqueue(
             sseEvent("error", {
-              message: "AI response missing files. Please try again.",
-            })
+              message:
+                "AI response missing /App.js entry point. Please try again.",
+            }),
           );
           controller.close();
           return;
@@ -280,58 +418,60 @@ export async function POST(request: NextRequest) {
         enqueue(sseEvent("status", { message: "Saving…" }));
 
         const lastUserMessage = messages[messages.length - 1];
+        const replyText = assistantMessage ?? "Here's your updated app.";
         const updatedMessages: Message[] = [
           ...messages,
-          { role: "assistant", content: assistantMessage },
+          { role: "assistant", content: replyText },
         ];
 
-        const [workspace] = await db.$transaction([
-          workspaceId
-            ? db.workspace.update({
-                where: { id: workspaceId, userId },
-                data: {
-                  messages: updatedMessages as never,
-                  fileData: newFileData as never,
-                },
-              })
-            : db.workspace.create({
-                data: {
-                  userId,
-                  title: aiTitle ?? lastUserMessage.content.slice(0, 80),
-                  messages: updatedMessages as never,
-                  fileData: newFileData as never,
-                },
-              }),
-          db.user.update({
-            where: { id: userId },
-            data: { credits: { decrement: CREDIT_COST_PER_GENERATION } },
-          }),
-        ]);
+        const workspaceResult = await db.$transaction(
+          async (tx) => {
+            const ws = workspaceId
+              ? await tx.workspace.update({
+                  where: { id: workspaceId, userId },
+                  data: {
+                    messages: updatedMessages as never,
+                    fileData: newFileData as never,
+                  },
+                })
+              : await tx.workspace.create({
+                  data: {
+                    userId,
+                    title: aiTitle ?? lastUserMessage.content.slice(0, 80),
+                    messages: updatedMessages as never,
+                    fileData: newFileData as never,
+                  },
+                });
 
-        const updatedUser = await db.user.findUnique({
-          where: { id: userId },
-          select: { credits: true },
-        });
+            const updatedUser = await tx.user.update({
+              where: { id: userId },
+              data: { credits: { decrement: CREDIT_COST_PER_GENERATION } },
+              select: { credits: true },
+            });
+
+            return { workspace: ws, creditsRemaining: updatedUser.credits };
+          },
+          { timeout: 200000 },
+        );
 
         // ── Emit final result ──────────────────────────────────────────────────
 
         enqueue(
           sseEvent("done", {
-            workspaceId: workspace.id,
-            assistantMessage,
+            workspaceId: workspaceResult.workspace.id,
+            assistantMessage: replyText,
             fileData: newFileData,
-            creditsRemaining:
-              updatedUser?.credits ?? user.credits - CREDIT_COST_PER_GENERATION,
-          })
+            creditsRemaining: workspaceResult.creditsRemaining,
+          }),
         );
       } catch (err) {
         console.error("[gen-ai-code] stream error:", err);
         enqueue(
           sseEvent("error", {
             message: getGeminiErrorMessage(err),
-          })
+          }),
         );
-      } finally {
+      } finally { 
         controller.close();
       }
     },

@@ -23,8 +23,9 @@ export const MIN_CREDITS_TO_GENERATE = 1;
 /** Ordered fallback list — first available model is used */
 export const GEMINI_MODELS = [
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
   "gemini-3-flash-preview",
-  "gemini-3.1-flash-lite",
 ] as const;
 
 export const PRICING_PLANS = [
