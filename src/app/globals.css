@@ -129,6 +129,27 @@
   }
 }
 
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(200%);
+  }
+}
+
 /* Sandpack — fill CodePanel workspace */
 .sandpack-panel {
   --sp-layout-height: 100%;
@@ -261,7 +282,9 @@
   line-height: 1;
   color: rgba(255, 255, 255, 0.35) !important;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 
 .sandpack-panel .close-button:hover {
@@ -273,4 +296,3 @@
   visibility: visible !important;
   opacity: 1 !important;
 }
-

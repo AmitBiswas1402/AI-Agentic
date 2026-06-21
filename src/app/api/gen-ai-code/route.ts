@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "@/lib/prisma";
 import { CREDIT_COST_PER_GENERATION, GEMINI_MODELS } from "@/lib/constants";
+import { resolveSandpackDependencies } from "@/lib/resolve-dependencies";
 import { FileData, Message } from "../../../../types/workspace";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -15,24 +16,27 @@ function sseEvent(type: string, payload: unknown): string {
 
 // ─── npm validation ───────────────────────────────────────────────────────────
 
-async function validateDependencies(
-  deps: Record<string, string>,
-): Promise<Record<string, string>> {
-  const valid: Record<string, string> = {};
-  await Promise.all(
-    Object.entries(deps).map(async ([pkg, version]) => {
-      try {
-        const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`, {
-          signal: AbortSignal.timeout(1500),
-        });
-        if (res.ok) valid[pkg] = version;
-      } catch {
-        // silently skip hallucinated packages
-      }
-    }),
-  );
-  return valid;
+function isPreviewFixRequest(content: string): boolean {
+  return content.includes("[PREVIEW RUNTIME ERROR");
 }
+
+const FIX_SYSTEM_PROMPT = `You are an expert React developer fixing Sandpack preview errors in generated apps.
+
+The preview runs in a browser bundler that does NOT hoist node_modules. Every npm package used (including transitive deps like prop-types, classnames, react-is) must appear in "dependencies" with version "latest".
+
+Respond with JSON only:
+{
+  "assistantMessage": "<what you fixed>",
+  "title": "<optional title>",
+  "files": { "/App.js": { "code": "..." } },
+  "dependencies": { "package-name": "latest" }
+}
+
+Rules:
+- Include ALL files every time.
+- Prefer adding missing dependencies over rewriting code.
+- Never add react, react-dom, or tailwindcss to dependencies.
+- Entry point must remain /App.js with default export.`;
 
 // ─── History trimming ─────────────────────────────────────────────────────────
 
@@ -246,9 +250,10 @@ RULES:
 5. The entry point must always be /App.js and must export a default component.
 6. All imports must reference files you include in "files" or packages in "dependencies".
 7. Do not include react, react-dom, or tailwindcss in "dependencies" — they are always available.
-8. When modifying existing code, include ALL files (both changed and unchanged) in "files".
-9. Keep code clean, readable, and production-quality.
-10. If the user attaches an image, use it as a design reference and match the layout/style as closely as possible.`;
+8. Sandpack does NOT hoist node_modules — list every npm package explicitly in "dependencies", including peer and runtime deps (e.g. prop-types for react-animated-weather, classnames, react-is).
+9. When modifying existing code, include ALL files (both changed and unchanged) in "files".
+10. Keep code clean, readable, and production-quality.
+11. If the user attaches an image, use it as a design reference and match the layout/style as closely as possible.`;
 
 // ─── Gemini contents builder ──────────────────────────────────────────────────
 
@@ -348,10 +353,15 @@ export async function POST(request: NextRequest) {
         enqueue(sseEvent("status", { message: "Generating code…" }));
 
         const contents = buildContents(messages, fileData);
+        const lastUserMessage = messages[messages.length - 1];
+        const isFixRequest = isPreviewFixRequest(lastUserMessage.content);
+        const systemInstruction = isFixRequest
+          ? FIX_SYSTEM_PROMPT
+          : SYSTEM_PROMPT;
 
         const accumulated = await generateContentWithFallback({
           contents,
-          systemInstruction: SYSTEM_PROMPT,
+          systemInstruction,
         });
 
         // ── Parse the complete JSON response ──────────────────────────────────
@@ -405,8 +415,10 @@ export async function POST(request: NextRequest) {
 
         // ── Validate npm packages ──────────────────────────────────────────────
 
-        enqueue(sseEvent("status", { message: "Validating packages…" }));
-        const validatedDeps = await validateDependencies(dependencies ?? {});
+        enqueue(sseEvent("status", { message: "Resolving packages…" }));
+        const validatedDeps = await resolveSandpackDependencies({
+          dependencies: dependencies ?? {},
+        });
         const newFileData: FileData = {
           files,
           dependencies: validatedDeps,
@@ -417,7 +429,6 @@ export async function POST(request: NextRequest) {
 
         enqueue(sseEvent("status", { message: "Saving…" }));
 
-        const lastUserMessage = messages[messages.length - 1];
         const replyText = assistantMessage ?? "Here's your updated app.";
         const updatedMessages: Message[] = [
           ...messages,

@@ -1,10 +1,17 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { FileData, Message, StatusStep, WorkspaceData } from "../../types/workspace";
+import {
+  FileData,
+  Message,
+  StatusStep,
+  WorkspaceData,
+} from "../../types/workspace";
 import CodePanel from "./CodePanel";
 import ChatPanel from "./ChatPanel";
 import { MIN_CREDITS_TO_GENERATE } from "@/lib/constants";
+import { buildPreviewFixPrompt } from "@/lib/preview-fix-prompt";
+import { parseMissingDependency } from "@/lib/resolve-dependencies";
 import { toast } from "sonner";
 
 interface WorkSpaceClientProps {
@@ -20,7 +27,7 @@ function parseMessages(raw: unknown): Message[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter(
     (m): m is Message =>
-      typeof m === "object" && m !== null && "role" in m && "content" in m
+      typeof m === "object" && m !== null && "role" in m && "content" in m,
   );
 }
 
@@ -47,6 +54,7 @@ const WorkSpaceClient = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusLog, setStatusLog] = useState<StatusStep[]>([]);
   const [isImproving, setIsImproving] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
 
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -72,7 +80,46 @@ const WorkSpaceClient = ({
     setWorkspaceId(workspace.id);
     setMessages(parseMessages(workspace.messages));
     setFileData(parseFileData(workspace.fileData));
+    fixAttemptRef.current.clear();
   }, [workspace]);
+
+  useEffect(() => {
+    if (!fileData?.dependencies) return;
+
+    let cancelled = false;
+
+    const resolveDeps = async () => {
+      try {
+        const res = await fetch("/api/resolve-deps", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dependencies: fileData.dependencies }),
+        });
+        if (!res.ok || cancelled) return;
+
+        const data = (await res.json()) as {
+          dependencies: Record<string, string>;
+        };
+        const currentKeys = Object.keys(fileData.dependencies).sort().join(",");
+        const resolvedKeys = Object.keys(data.dependencies).sort().join(",");
+        if (currentKeys === resolvedKeys || cancelled) return;
+
+        const patched: FileData = {
+          ...fileData,
+          dependencies: data.dependencies,
+        };
+        setFileData(patched);
+        fileDataRef.current = patched;
+      } catch {
+        // non-fatal
+      }
+    };
+
+    void resolveDeps();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileData?.dependencies, fileData?.files]);
 
   const handleFilePatch = useCallback((patches: FileData) => {
     setFileData(patches);
@@ -99,6 +146,26 @@ const WorkSpaceClient = ({
       { label, status: "running" as const },
     ]);
   };
+
+  const fixAttemptRef = useRef<Set<string>>(new Set());
+
+  const persistFileData = useCallback(
+    async (patched: FileData) => {
+      const wsId = workspaceIdRef.current;
+      if (!wsId) return;
+
+      await fetch("/api/workspace/patch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: wsId,
+          userId,
+          fileData: patched,
+        }),
+      });
+    },
+    [userId],
+  );
 
   const handleGenerate = useCallback(
     async (prompt: string, imageUrl?: string) => {
@@ -258,7 +325,7 @@ const WorkSpaceClient = ({
 
         if (res.status === 403) {
           toast.error(
-            "Upgrade to Starter or Pro to use Improve with Forge Agent."
+            "Upgrade to Starter or Pro to use Improve with Forge Agent.",
           );
           setMessages((prev) => prev.slice(0, -2));
           return;
@@ -343,7 +410,81 @@ const WorkSpaceClient = ({
     },
     // fileData intentionally omitted — read via fileDataRef above
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [credits, isGenerating, isImproving, userId]
+    [credits, isGenerating, isImproving, userId],
+  );
+
+  const handleFixError = useCallback(
+    async (error: string) => {
+      if (isGenerating || isFixing || isImproving) return;
+
+      const current = fileDataRef.current;
+      if (!current?.files) return;
+
+      const missing = parseMissingDependency(error);
+      const fixKey = missing ?? error.slice(0, 120);
+      if (fixAttemptRef.current.has(fixKey)) return;
+
+      setIsFixing(true);
+      fixAttemptRef.current.add(fixKey);
+
+      try {
+        if (missing) {
+          toast.info(`Installing ${missing}…`);
+
+          const res = await fetch("/api/resolve-deps", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dependencies: {
+                ...current.dependencies,
+                [missing]: "latest",
+              },
+            }),
+          });
+
+          if (res.ok) {
+            const data = (await res.json()) as {
+              dependencies: Record<string, string>;
+            };
+            const patched: FileData = {
+              ...current,
+              dependencies: data.dependencies,
+            };
+            setFileData(patched);
+            fileDataRef.current = patched;
+            await persistFileData(patched);
+            toast.success(`Installed ${missing} and related packages`);
+            return;
+          }
+        }
+
+        if (credits < MIN_CREDITS_TO_GENERATE) {
+          toast.error(
+            missing
+              ? `Could not install ${missing}. Not enough credits for AI fix.`
+              : "Not enough credits to auto-fix this error.",
+          );
+          return;
+        }
+
+        toast.info("Asking AI to fix the preview error…");
+        const fixPrompt = buildPreviewFixPrompt({ error, fileData: current });
+        await handleGenerate(fixPrompt);
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to auto-fix preview error.");
+      } finally {
+        setIsFixing(false);
+      }
+    },
+    [
+      credits,
+      handleGenerate,
+      isFixing,
+      isGenerating,
+      isImproving,
+      persistFileData,
+    ],
   );
 
   const handleStop = useCallback(() => {
@@ -368,11 +509,7 @@ const WorkSpaceClient = ({
     const params = new URLSearchParams(window.location.search);
     params.delete("prompt");
     const qs = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      `/workspace${qs ? `?${qs}` : ""}`,
-    );
+    window.history.replaceState(null, "", `/workspace${qs ? `?${qs}` : ""}`);
 
     void handleGenerate(trimmed);
   }, [
@@ -392,7 +529,7 @@ const WorkSpaceClient = ({
         <ChatPanel
           messages={messages}
           isGenerating={isGenerating}
-          isImproving={false}
+          isImproving={isImproving}
           statusLog={statusLog}
           credits={credits}
           initialPrompt={initialPrompt}
@@ -412,6 +549,12 @@ const WorkSpaceClient = ({
           isGenerating={isGenerating}
           statusLog={statusLog}
           onFilePatch={handleFilePatch}
+          onFixError={handleFixError}
+          onImprove={handleImprove}
+          isFixing={isFixing}
+          isImproving={isImproving}
+          isProUser={userPlan === "starter" || userPlan === "pro"}
+          appTitle={fileData?.title ?? workspace?.title ?? null}
         />
       </div>
     </div>

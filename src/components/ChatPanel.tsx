@@ -4,7 +4,7 @@ import { BlueTitle } from "./reusables";
 import { PricingModal } from "./PricingModal";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
-import { ArrowUp, Loader2, Paperclip, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip, Sparkles, Square, Wand2, X } from "lucide-react";
 import { Button } from "./ui/button";
 import ReactMarkdown from "react-markdown";
 
@@ -83,7 +83,7 @@ const ChatPanel = ({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, isGenerating, statusLog]);
+  }, [messages, isGenerating, isImproving, statusLog]);
 
   // Clear the input once the prompt has been submitted (auto or manual)
   React.useEffect(() => {
@@ -99,6 +99,9 @@ const ChatPanel = ({
       setInput("");
     }
   }, [messages, initialPrompt]);
+
+  const lastMsg = messages[messages.length - 1];
+  const isStreamingAssistant = isImproving && lastMsg?.role === "assistant";
 
   return (
     <div className="flex flex-col h-full shrink-0 w-[320px] border-r border-white/6 bg-[#0d0d0d]">
@@ -126,54 +129,84 @@ const ChatPanel = ({
         className="flex-1 overflow-y-auto px-4 py-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] scrollbar-none"
       >
         <div className={cn("space-y-4", showPlaceholder && "opacity-40")}>
-          {renderedMessages.map((msg, index) => (
-            <div key={index}>
-              {msg.role === "user" ? (
-                <div className="flex items-end justify-end gap-2">
-                  <div className="relative max-w-[240px] rounded-2xl rounded-br-sm border border-white/20 bg-white/10 p-3 text-sm text-white/70">
-                    <span className="absolute -right-1 bottom-3 h-2.5 w-2.5 rotate-45 border-r border-b border-white/20 bg-white/10" />
-                    {msg.imageUrl && (
+          {renderedMessages.map((msg, i) => {
+            const isLast = i === renderedMessages.length - 1;
+            const isLiveStream =
+              !showPlaceholder && isLast && isStreamingAssistant;
+
+            return (
+              <div key={i}>
+                {msg.role === "user" ? (
+                  <div className="flex items-start justify-end gap-2">
+                    <div className="max-w-[85%] space-y-1.5">
+                      {msg.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={msg.imageUrl}
+                          alt="uploaded"
+                          className="max-h-40 w-full rounded-lg object-cover"
+                        />
+                      )}
+                      <div className="rounded-2xl rounded-br-sm bg-white/10 px-3.5 py-2.5">
+                        <p className="text-[13px] leading-relaxed text-white/80 wrap-break-word">
+                          {msg.content}
+                        </p>
+                      </div>
+                    </div>
+                    {userImageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={msg.imageUrl}
-                        alt="Attached"
-                        className="mb-2 max-h-32 w-full rounded-lg border border-white/10 object-cover"
+                        src={userImageUrl}
+                        alt="You"
+                        className="mt-0.5 h-6 w-6 shrink-0 rounded-full object-cover"
                       />
+                    ) : (
+                      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-semibold text-white/50">
+                        U
+                      </div>
                     )}
-                    <p className="whitespace-pre-wrap wrap-break-word">
-                      {msg.content}
-                    </p>
                   </div>
-                  {userImageUrl ? (
-                    <img
-                      src={userImageUrl}
-                      alt="You"
-                      className="h-8 w-8 shrink-0 rounded-full border border-white/15 object-cover"
+                ) : (
+                  <div className="flex items-start gap-2">
+                    <Image
+                      src="/logo.svg"
+                      alt="Forge"
+                      width={24}
+                      height={24}
+                      className="mt-0.5 h-6 w-6 shrink-0 rounded-md"
                     />
-                  ) : (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/10 text-xs font-medium text-white/60">
-                      U
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-end gap-2">
-                  <Image
-                    src="/logo.svg"
-                    alt="Forge"
-                    width={32}
-                    height={32}
-                    className="h-8 w-8 shrink-0 rounded-full border border-white/10 bg-white/5 p-1"
-                  />
-                  <div className="relative max-w-[240px] rounded-2xl rounded-bl-sm border border-white/20 bg-white/10 p-3 text-sm text-white/70">
-                    <span className="absolute -left-1 bottom-3 h-2.5 w-2.5 rotate-45 border-b border-l border-white/20 bg-white/10" />
-                    <div className="prose prose-sm prose-invert max-w-none wrap-break-word text-[13px] leading-relaxed text-white/70 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:text-blue-300/80 [&_code]:break-all [&_li]:my-0.5 [&_p]:my-1 [&_pre]:overflow-x-auto! [&_pre]:whitespace-pre-wrap! [&_ul]:my-1">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <div className="min-w-0 rounded-2xl rounded-tl-sm bg-white/5 px-3.5 py-2.5">
+                      {isLiveStream && !msg.content ? (
+                        <div className="flex items-center gap-2">
+                          <Wand2 className="h-3 w-3 shrink-0 animate-pulse text-blue-400/60" />
+                          <span className="animate-pulse text-[12px] text-white/30">
+                            Cline is thinking…
+                          </span>
+                        </div>
+                      ) : isLiveStream && msg.content ? (
+                        <div>
+                          <div className="mb-1.5 flex items-center gap-1.5">
+                            <Wand2 className="h-3 w-3 shrink-0 text-blue-400/60" />
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-blue-400/50">
+                              Agent reasoning
+                            </span>
+                          </div>
+                          <p className="text-[12px] leading-relaxed text-white/35 wrap-break-word">
+                            {msg.content}
+                            <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-blue-400/60 align-middle" />
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="prose prose-sm prose-invert max-w-none wrap-break-word text-[13px] leading-relaxed text-white/70 [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:text-blue-300/80 [&_code]:break-all [&_li]:my-0.5 [&_p]:my-1 [&_pre]:overflow-x-auto! [&_pre]:whitespace-pre-wrap! [&_ul]:my-1">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Statuses */}

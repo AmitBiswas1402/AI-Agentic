@@ -17,6 +17,9 @@ const PLAN_ORDER: Record<string, number> = {
   pro: 2,
 };
 
+const CLERK_BILLING_ENABLED =
+  process.env.NEXT_PUBLIC_CLERK_BILLING_ENABLED === "true";
+
 const checkoutAppearance = {
   appearance: {
     elements: {
@@ -58,6 +61,8 @@ export function PricingCard({
     !isActive &&
     PLAN_ORDER[plan.key] < PLAN_ORDER[activePlanKey];
   const paidCtaLabel = isDowngrade ? "Downgrade" : ctaLabel;
+
+  const paidPlanId = plan.planId;
 
   return (
     <div
@@ -161,28 +166,39 @@ export function PricingCard({
               </Link>
             </Button>
           )
-        ) : signedIn && plan.planId ? (
-          <Show when="signed-in">
-            <CheckoutButton
-              planId={plan.planId}
-              planPeriod="month"
-              for="user"
-              checkoutProps={checkoutAppearance}
-            >
-              <Button
-                className={cn(
-                  "w-full rounded-full text-sm font-semibold transition-all",
-                  plan.featured
-                    ? "bg-blue-500 text-white hover:bg-blue-400 active:scale-95"
-                    : "border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90",
-                )}
-                variant="ghost"
+        ) : signedIn && paidPlanId && plan.active ? (
+          CLERK_BILLING_ENABLED ? (
+            <Show when="signed-in">
+              <CheckoutButton
+                planId={paidPlanId}
+                planPeriod="month"
+                for="user"
+                checkoutProps={checkoutAppearance}
               >
-                {paidCtaLabel}
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            </CheckoutButton>
-          </Show>
+                <Button
+                  className={cn(
+                    "w-full rounded-full text-sm font-semibold transition-all",
+                    plan.featured
+                      ? "bg-blue-500 text-white hover:bg-blue-400 active:scale-95"
+                      : "border border-white/10 bg-transparent text-white/60 hover:bg-white/6 hover:text-white/90",
+                  )}
+                  variant="ghost"
+                >
+                  {paidCtaLabel}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </CheckoutButton>
+            </Show>
+          ) : (
+            <Button
+              disabled
+              className="w-full rounded-full text-sm font-semibold opacity-50 cursor-not-allowed border border-white/10 bg-transparent text-white/60"
+              variant="ghost"
+              title="Billing is not enabled yet"
+            >
+              Coming soon
+            </Button>
+          )
         ) : !isLoaded ? (
           <Button
             disabled
